@@ -19,6 +19,7 @@
 #include <log/log.h>
 
 #include <algorithm>
+#include <cutils/properties.h>
 #include <media/stagefright/foundation/AUtils.h>
 #include <media/stagefright/foundation/MediaDefs.h>
 
@@ -369,6 +370,7 @@ C2SoftVpxDec::C2SoftVpxDec(
       mIntf(intfImpl),
       mCodecCtx(nullptr),
       mCoreCount(1),
+      mUncachedOutput(false),
       mQueue(new Mutexed<ConversionQueue>) {
 }
 
@@ -442,6 +444,8 @@ status_t C2SoftVpxDec::initDecoder() {
 #else
     mMode = MODE_VP8;
 #endif
+    mUncachedOutput = mMode == MODE_VP9 &&
+            property_get_bool("debug.vmax.vp9.uncached_output", false);
     mHalPixelFormat = HAL_PIXEL_FORMAT_YV12;
     {
         IntfImpl::Lock lock = mIntf->lock();
@@ -480,6 +484,15 @@ status_t C2SoftVpxDec::initDecoder() {
     }
 
     if (mMode == MODE_VP9) {
+        if ((vpx_err = vpx_codec_control(mCodecCtx, VP9D_SET_ROW_MT, 1))) {
+            ALOGE("Failed to enable VP9 row multithreading. (%d)", vpx_err);
+            return UNKNOWN_ERROR;
+        }
+        if ((vpx_err = vpx_codec_control(mCodecCtx, VP9D_SET_LOOP_FILTER_OPT, 1))) {
+            ALOGE("Failed to enable VP9 loop filter optimization. (%d)", vpx_err);
+            return UNKNOWN_ERROR;
+        }
+
         using namespace std::string_literals;
         for (int i = 0; i < mCoreCount; ++i) {
             sp<ConverterThread> thread(new ConverterThread(mQueue));
@@ -770,6 +783,10 @@ status_t C2SoftVpxDec::outputBuffer(
     }
 
     C2MemoryUsage usage = { C2MemoryUsage::CPU_READ, C2MemoryUsage::CPU_WRITE };
+    if (mUncachedOutput && format == HAL_PIXEL_FORMAT_RGBA_1010102) {
+        // Qualcomm GRALLOC_USAGE_PRIVATE_UNCACHED; enabled only by opted-in devices.
+        usage.expected |= 1ull << 29;
+    }
     // We always create a graphic block that is width aligned to 16 and height
     // aligned to 2. We set the correct "crop" value of the image in the call to
     // createGraphicBuffer() by setting the correct image dimensions.

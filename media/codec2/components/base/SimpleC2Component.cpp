@@ -24,6 +24,9 @@
 #include <media/stagefright/foundation/AUtils.h>
 
 #include <inttypes.h>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 #include <libyuv.h>
 
 #include <C2Config.h>
@@ -243,6 +246,35 @@ static const struct Coeffs GetCoeffsForAspects(const C2ColorAspectsStruct &aspec
     }
 }
 
+#if defined(__aarch64__)
+static inline uint32x4_t PackRGBA1010102Neon(
+        int32x4_t y, int32x4_t ub, int32x4_t ugvg, int32x4_t vr) {
+    const int32x4_t zero = vdupq_n_s32(0);
+    const int32x4_t max = vdupq_n_s32(1023);
+    // Negative division results are clipped to zero, so arithmetic shifts are exact here.
+    uint32x4_t b = vreinterpretq_u32_s32(vminq_s32(max, vmaxq_s32(zero,
+            vshrq_n_s32(vaddq_s32(y, ub), 10))));
+    uint32x4_t g = vreinterpretq_u32_s32(vminq_s32(max, vmaxq_s32(zero,
+            vshrq_n_s32(vaddq_s32(y, ugvg), 10))));
+    uint32x4_t r = vreinterpretq_u32_s32(vminq_s32(max, vmaxq_s32(zero,
+            vshrq_n_s32(vaddq_s32(y, vr), 10))));
+    return vorrq_u32(vdupq_n_u32(0xc0000000u),
+            vorrq_u32(vshlq_n_u32(b, 20), vorrq_u32(vshlq_n_u32(g, 10), r)));
+}
+
+static inline void ConvertRGBA1010102RowNeon(
+        uint32_t *dst, const uint16_t *src, int16_t cy, int16_t c16,
+        int32x4_t ub, int32x4_t ugvg, int32x4_t vr) {
+    int16x8_t y = vsubq_s16(vreinterpretq_s16_u16(vld1q_u16(src)), vdupq_n_s16(c16));
+    int32x4_t y0 = vaddq_s32(vmull_n_s16(vget_low_s16(y), cy), vdupq_n_s32(512));
+    int32x4_t y1 = vaddq_s32(vmull_n_s16(vget_high_s16(y), cy), vdupq_n_s32(512));
+    vst1q_u32(dst, PackRGBA1010102Neon(y0,
+            vzip1q_s32(ub, ub), vzip1q_s32(ugvg, ugvg), vzip1q_s32(vr, vr)));
+    vst1q_u32(dst + 4, PackRGBA1010102Neon(y1,
+            vzip2q_s32(ub, ub), vzip2q_s32(ugvg, ugvg), vzip2q_s32(vr, vr)));
+}
+#endif
+
 }
 
 #define CLIP3(min, v, max) (((v) < (min)) ? (min) : (((max) > (v)) ? (v) : (max)))
@@ -273,7 +305,26 @@ void convertYUV420Planar16ToRGBA1010102(
         uint16_t *uSrc = (uint16_t *)srcU;
         uint16_t *vSrc = (uint16_t *)srcV;
 
-        for (size_t x = 0; x < width; x += 2) {
+        size_t x = 0;
+#if defined(__aarch64__)
+        for (; width - x >= 8; x += 8) {
+            int16x4_t u = vsub_s16(vreinterpret_s16_u16(vld1_u16(uSrc)), vdup_n_s16(512));
+            int16x4_t v = vsub_s16(vreinterpret_s16_u16(vld1_u16(vSrc)), vdup_n_s16(512));
+            int32x4_t ub = vmull_n_s16(u, _b_u);
+            int32x4_t ugvg = vmlal_n_s16(vmull_n_s16(u, _neg_g_u), v, _neg_g_v);
+            int32x4_t vr = vmull_n_s16(v, _r_v);
+            ConvertRGBA1010102RowNeon(dstTop, ySrcTop, _y, _c16, ub, ugvg, vr);
+            ConvertRGBA1010102RowNeon(dstBot, ySrcBot, _y, _c16, ub, ugvg, vr);
+            uSrc += 4;
+            vSrc += 4;
+            ySrcTop += 8;
+            ySrcBot += 8;
+            dstTop += 8;
+            dstBot += 8;
+        }
+#endif
+        for (; x < width; x += 2) {
+
             int32_t u, v, y00, y01, y10, y11;
             u = *uSrc - 512;
             uSrc += 1;

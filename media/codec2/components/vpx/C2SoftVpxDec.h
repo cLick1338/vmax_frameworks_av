@@ -79,6 +79,7 @@ struct C2SoftVpxDec : public SimpleC2Component {
     bool mSignalledError;
 
     int mCoreCount;
+    bool mUncachedOutput;
     struct ConversionQueue {
         std::list<std::function<void()>> entries;
         Condition cond;
