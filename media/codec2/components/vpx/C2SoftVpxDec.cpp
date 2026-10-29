@@ -48,7 +48,8 @@ public:
                 C2Component::KIND_DECODER,
                 C2Component::DOMAIN_VIDEO,
 #ifdef VP9
-                MEDIA_MIMETYPE_VIDEO_VP9
+                MEDIA_MIMETYPE_VIDEO_VP9,
+                {"c2.vmax.vp9.decoder"}
 #else
                 MEDIA_MIMETYPE_VIDEO_VP8
 #endif

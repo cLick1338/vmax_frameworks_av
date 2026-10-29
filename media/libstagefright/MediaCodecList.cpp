@@ -320,6 +320,7 @@ const sp<AMessage> MediaCodecList::getGlobalSettings() const {
 bool MediaCodecList::isSoftwareCodec(const AString &componentName) {
     return componentName.startsWithIgnoreCase("OMX.google.")
             || componentName.startsWithIgnoreCase("c2.android.")
+            || componentName == "c2.vmax.vp9.decoder"
             || (!componentName.startsWithIgnoreCase("OMX.")
                     && !componentName.startsWithIgnoreCase("c2."));
 }

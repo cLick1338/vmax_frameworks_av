@@ -29,6 +29,7 @@
 #include <util/C2InterfaceUtils.h>
 
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <sstream>
@@ -1373,7 +1374,8 @@ bool C2InterfaceUtils::FillTraitsFromInterface(
             C2ComponentAliasesSetting::From(params[0].get());
         if (aliasesSetting) {
             std::istringstream iss(
-                    std::string(aliasesSetting->m.value, aliasesSetting->flexCount()));
+                    std::string(aliasesSetting->m.value,
+                                strnlen(aliasesSetting->m.value, aliasesSetting->flexCount())));
             C2_LOG(DEBUG) << intf->getName() << " has aliases: " << iss.str();
 
             for (std::string tok; std::getline(iss, tok, ','); ) {

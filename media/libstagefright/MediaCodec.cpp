@@ -2481,6 +2481,35 @@ status_t MediaCodec::configure(
         const sp<IDescrambler> &descrambler,
         uint32_t flags) {
 
+    if (mState == INITIALIZED && mInitName == "OMX.qcom.video.decoder.vp9"
+            && crypto == nullptr && descrambler == nullptr
+            && !(flags & CONFIGURE_FLAG_ENCODE)
+            && property_get_bool("debug.vmax.vp9.hdr_fallback", false)) {
+        AString mime;
+        int32_t transfer = 0;
+        int32_t profile = 0;
+        format->findInt32("color-transfer", &transfer);
+        format->findInt32("profile", &profile);
+        if (format->findString("mime", &mime) && mime == MEDIA_MIMETYPE_VIDEO_VP9
+                && (transfer == COLOR_TRANSFER_ST2084 || transfer == COLOR_TRANSFER_HLG
+                    || profile == VP9Profile2 || profile == VP9Profile2HDR
+                    || profile == VP9Profile2HDR10Plus)) {
+            // Preserve the client's asynchronous callback while replacing the unsupported decoder.
+            sp<AMessage> callback = mCallback;
+            ALOGI("Routing Qualcomm VP9 HDR configuration to c2.android.vp9.decoder");
+            status_t err = resetTo("c2.android.vp9.decoder");
+            if (err != OK) {
+                return err;
+            }
+            if (callback != nullptr) {
+                err = setCallback(callback);
+                if (err != OK) {
+                    return err;
+                }
+            }
+        }
+    }
+
     // Update the codec importance.
     updateCodecImportance(format);
 
@@ -3259,6 +3288,10 @@ status_t MediaCodec::releaseAsync(const sp<AMessage> &notify) {
 }
 
 status_t MediaCodec::reset() {
+    return resetTo(mInitName);
+}
+
+status_t MediaCodec::resetTo(const AString &name) {
     /* When external-facing MediaCodec object is created,
        it is already initialized.  Thus, reset is essentially
        release() followed by init(), plus clearing the state */
@@ -3287,7 +3320,7 @@ status_t MediaCodec::reset() {
     mHaveInputSurface = false;
 
     if (err == OK) {
-        err = init(mInitName);
+        err = init(name);
     }
     return err;
 }
